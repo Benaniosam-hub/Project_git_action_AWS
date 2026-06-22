@@ -1,1 +1,82 @@
-temp
+name: Deploy Python API to AWS ECS
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  AWS_REGION: ap-south-2                     # Asia Pacific (Hyderabad)
+  ECR_REPOSITORY: flask-api                  # Your public ECR repo name
+  ECS_SERVICE: flask-api-task-service        # Your ECS service name
+  ECS_CLUSTER: flask-api-cluster             # Your ECS cluster name
+  ECS_TASK_DEFINITION_FAMILY: flask-api-task # Your ECS task definition family name
+  CONTAINER_NAME: flask-api-container        # The container name inside your task definition
+
+jobs:
+  deploy:
+    name: Build, Push, and Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+    # Step 1: Clone the repository into the GitHub runner workspace
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    # Step 2: Log into AWS for ECR Public access (ECR Public token authentication requires us-east-1)
+    - name: Configure AWS Credentials for ECR
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1 
+
+    # Step 3: Authenticate with the ECR Public registry
+    - name: Login to Amazon ECR Public
+      id: login-ecr-public
+      uses: aws-actions/amazon-ecr-login@v2
+      with:
+        registry-type: public
+
+    # Step 4: Build your custom Dockerfile and Push it to ECR Public using the unique Git SHA tag
+    - name: Build, Tag, and Push Image to ECR Public
+      id: build-image
+      env:
+        REGISTRY: public.ecr.aws
+        REGISTRY_ALIAS: o2e0w5z3 
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        docker build -t $REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:$IMAGE_TAG .
+        docker push $REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:$IMAGE_TAG
+        echo "image=$REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+    # Step 5: Switch authentication focus back to your actual deployment cluster region (Hyderabad)
+    - name: Configure AWS regional context
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    # Step 6: Download the current task configuration JSON file from ECS
+    - name: Download Active Task Definition
+      run: |
+        aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION_FAMILY }} --query taskDefinition > task-definition.json
+
+    # Step 7: Update the container definition image property with your newly built image tag
+    - name: Render New Task Definition
+      id: render-task-def
+      uses: aws-actions/amazon-ecs-render-task-definition@v1
+      with:
+        task-definition: task-definition.json
+        container-name: ${{ env.CONTAINER_NAME }}
+        image: ${{ steps.build-image.outputs.image }}
+
+    # Step 8: Push the updated Task Definition revision to AWS and initiate a rolling deployment on ECS
+    - name: Deploy Amazon ECS Task Definition
+      uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+      with:
+        task-definition: ${{ steps.render-task-def.outputs.task-definition }}
+        service: ${{ env.ECS_SERVICE }}
+        cluster: ${{ env.ECS_CLUSTER }}
+        wait-for-service-stability: true
