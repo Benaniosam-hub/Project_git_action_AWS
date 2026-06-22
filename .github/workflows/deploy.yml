@@ -6,12 +6,12 @@ on:
       - main
 
 env:
-  AWS_REGION: ap-south-2                     # Asia Pacific (Hyderabad)
-  ECR_REPOSITORY: flask-api                  # Your public ECR repo name
-  ECS_SERVICE: flask-api-task-service        # Your ECS service name
-  ECS_CLUSTER: flask-api-cluster             # Your ECS cluster name
-  ECS_TASK_DEFINITION_FAMILY: flask-api-task # Your ECS task definition family name
-  CONTAINER_NAME: flask-api-container        # The container name inside your task definition
+  AWS_REGION: ap-south-2                     # Your active cluster region (Hyderabad)
+  ECR_REPOSITORY: flask-api                  
+  ECS_SERVICE: flask-api-task-service        
+  ECS_CLUSTER: flask-api-cluster             
+  ECS_TASK_DEFINITION_FAMILY: flask-api-task 
+  CONTAINER_NAME: flask-api-container        
 
 jobs:
   deploy:
@@ -19,11 +19,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # Step 1: Clone the repository into the GitHub runner workspace
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    # Step 2: Log into AWS for ECR Public access (ECR Public token authentication requires us-east-1)
+    # Step 1: Login context for public ECR image gallery hosting
     - name: Configure AWS Credentials for ECR
       uses: aws-actions/configure-aws-credentials@v4
       with:
@@ -31,14 +30,12 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: us-east-1 
 
-    # Step 3: Authenticate with the ECR Public registry
     - name: Login to Amazon ECR Public
       id: login-ecr-public
       uses: aws-actions/amazon-ecr-login@v2
       with:
         registry-type: public
 
-    # Step 4: Build your custom Dockerfile and Push it to ECR Public using the unique Git SHA tag
     - name: Build, Tag, and Push Image to ECR Public
       id: build-image
       env:
@@ -50,7 +47,7 @@ jobs:
         docker push $REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:$IMAGE_TAG
         echo "image=$REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-    # Step 5: Switch authentication focus back to your actual deployment cluster region (Hyderabad)
+    # Step 2: Switch execution context to Hyderabad region to download and deploy resources
     - name: Configure AWS regional context
       uses: aws-actions/configure-aws-credentials@v4
       with:
@@ -58,12 +55,11 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-    # Step 6: Download the current task configuration JSON file from ECS
+    # Explicitly adding the region target here fixes the ClientException error
     - name: Download Active Task Definition
       run: |
-        aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION_FAMILY }} --query taskDefinition > task-definition.json
+        aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION_FAMILY }} --region ${{ env.AWS_REGION }} --query taskDefinition > task-definition.json
 
-    # Step 7: Update the container definition image property with your newly built image tag
     - name: Render New Task Definition
       id: render-task-def
       uses: aws-actions/amazon-ecs-render-task-definition@v1
@@ -72,7 +68,6 @@ jobs:
         container-name: ${{ env.CONTAINER_NAME }}
         image: ${{ steps.build-image.outputs.image }}
 
-    # Step 8: Push the updated Task Definition revision to AWS and initiate a rolling deployment on ECS
     - name: Deploy Amazon ECS Task Definition
       uses: aws-actions/amazon-ecs-deploy-task-definition@v2
       with:
