@@ -22,7 +22,7 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    # Step 1: Login context for public ECR image gallery hosting
+    # Step 1: Login using us-east-1 strictly for ECR Public Gallery authentication token
     - name: Configure AWS Credentials for ECR
       uses: aws-actions/configure-aws-credentials@v4
       with:
@@ -47,18 +47,13 @@ jobs:
         docker push $REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:$IMAGE_TAG
         echo "image=$REGISTRY/$REGISTRY_ALIAS/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-    # Step 2: Switch execution context to Hyderabad region to download and deploy resources
-    - name: Configure AWS regional context
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
-
-    # Explicitly adding the region target here fixes the ClientException error
+    # Step 2: Download the task definition by explicitly forcing your region
     - name: Download Active Task Definition
       run: |
-        aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION_FAMILY }} --region ${{ env.AWS_REGION }} --query taskDefinition > task-definition.json
+        aws ecs describe-task-definition \
+          --task-definition ${{ env.ECS_TASK_DEFINITION_FAMILY }} \
+          --region ${{ env.AWS_REGION }} \
+          --query taskDefinition > task-definition.json
 
     - name: Render New Task Definition
       id: render-task-def
@@ -68,6 +63,7 @@ jobs:
         container-name: ${{ env.CONTAINER_NAME }}
         image: ${{ steps.build-image.outputs.image }}
 
+    # Step 3: Deploy to ECS by explicitly forcing your region inside the deploy action
     - name: Deploy Amazon ECS Task Definition
       uses: aws-actions/amazon-ecs-deploy-task-definition@v2
       with:
@@ -75,3 +71,6 @@ jobs:
         service: ${{ env.ECS_SERVICE }}
         cluster: ${{ env.ECS_CLUSTER }}
         wait-for-service-stability: true
+      env:
+        AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
+        AWS_REGION: ${{ env.AWS_REGION }}
