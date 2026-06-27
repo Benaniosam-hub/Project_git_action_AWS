@@ -82,6 +82,188 @@ Content-Type: application/json
 }
 ```
 
+## Architecture Diagram
+
+### Complete System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          GITHUB REPOSITORY                             │
+│                                                                         │
+│  ┌──────────────┐    ┌──────────────┐    ┌─────────────────┐          │
+│  │   app.py     │    │ Dockerfile   │    │ .github/workflows
+  │          │
+│  │ (Flask API)  │    │ (Python 3.11)│    │   └─ deploy.yml │          │
+│  └──────────────┘    └──────────────┘    └─────────────────┘          │
+│                                                                         │
+└────────────────────────────────┬────────────────────────────────────────┘
+                                 │
+                        Git Push to main branch
+                                 │
+                                 ▼
+         ┌───────────────────────────────────────────────┐
+         │      GITHUB ACTIONS CI/CD PIPELINE            │
+         │                                               │
+         │  ┌─────────────────────────────────────────┐  │
+         │  │ Step 1: Checkout Code                   │  │
+         │  └─────────────────────────────────────────┘  │
+         │                    │                           │
+         │                    ▼                           │
+         │  ┌─────────────────────────────────────────┐  │
+         │  │ Step 2: Configure AWS Credentials      │  │
+         │  │ (IAM Access Key + Secret Key)          │  │
+         │  └─────────────────────────────────────────┘  │
+         │                    │                           │
+         │                    ▼                           │
+         │  ┌─────────────────────────────────────────┐  │
+         │  │ Step 3: Login to ECR Public             │  │
+         │  │ (AWS ECR Authentication)                │  │
+         │  └─────────────────────────────────────────┘  │
+         │                    │                           │
+         │                    ▼                           │
+         │  ┌─────────────────────────────────────────┐  │
+         │  │ Step 4: Build Docker Image              │  │
+         │  │ docker build -t flask-api:$IMAGE_TAG .  │  │
+         │  └─────────────────────────────────────────┘  │
+         │                    │                           │
+         │                    ▼                           │
+         │  ┌────────────────────────────────��────────┐  │
+         │  │ Step 5: Tag & Push to ECR Public        │  │
+         │  │ public.ecr.aws/o2e0w5z3/flask-api:TAG  │  │
+         │  └─────────────────────────────────────────┘  │
+         │                    │                           │
+         └────────────────────┼───────────────────────────┘
+                              │
+                              ▼
+         ┌───────────────────────────────────────────────┐
+         │   AWS ECR PUBLIC (Elastic Container Registry) │
+         │                                               │
+         │  ┌─────────────────────────────────────────┐  │
+         │  │  flask-api:commit-sha                   │  │
+         │  │  (Docker Image Stored)                  │  │
+         │  └─────────────────────────────────────────┘  │
+         │                                               │
+         └────────────────────┬───────────────────────────┘
+                              │
+                              ▼
+         ┌───────────────────────────────────────────────┐
+         │      GITHUB ACTIONS DEPLOYMENT STAGE          │
+         │                                               │
+         │  ┌─────────────────────────────────────────┐  │
+         │  │ Step 6: Download ECS Task Definition    │  │
+         │  │ (Current running task config)           │  │
+         │  └─────────────────────────────────────────┘  │
+         │                    │                           │
+         │                    ▼                           │
+         │  ┌─────────────────────────────────────────┐  │
+         │  │ Step 7: Render New Task Definition      │  │
+         │  │ (Update with new image URI)             │  │
+         │  └─────────────────────────────────────────┘  │
+         │                    │                           │
+         │                    ▼                           │
+         │  ┌─────────────────────────────────────────┐  │
+         │  │ Step 8: Deploy to ECS Service           │  │
+         │  │ (Update flask-api-task-service)         │  │
+         │  └─────────────────────────────────────────┘  │
+         │                                               │
+         └────────────────────┬───────────────────────────┘
+                              │
+                              ▼
+         ┌─────────────────────────────────────────────────┐
+         │        AWS ECS CLUSTER (ap-south-2)             │
+         │        Region: Mumbai / Hyderabad               │
+         │                                                 │
+         │  Cluster: flask-api-cluster                    │
+         │                                                 │
+         │  ┌──────────────────────────────────────────┐   │
+         │  │  ECS Service: flask-api-task-service    │   │
+         │  │                                          │   │
+         │  │  ┌────────────────────────────────────┐  │   │
+         │  │  │ Container: flask-api-container    │  │   │
+         │  │  │                                    │  │   │
+         │  │  │ ┌──────────────────────────────┐  │  │   │
+         │  │  │ │ Flask API Application        │  │  │   │
+         │  │  │ │ Port: 5000                   │  │  │   │
+         │  │  │ │ ┌────────────────────────┐  │  │  │   │
+         │  │  │ │ │ GET  /hello            │  │  │  │   │
+         │  │  │ │ │ GET  /students         │  │  │  │   │
+         │  │  │ │ │ POST /students         │  │  │  │   │
+         │  │  │ │ └────────────────────────┘  │  │  │   │
+         │  │  │ └──────────────────────────────┘  │  │   │
+         │  │  │             │                      │  │   │
+         │  │  │             ▼                      │  │   │
+         │  │  │ ┌──────────────────────────────┐  │  │   │
+         │  │  │ │  PostgreSQL Driver           │  │  │   │
+         │  │  │ │  (psycopg2)                  │  │  │   │
+         │  │  │ └──────────────────────────────┘  │  │   │
+         │  │  └────────────────────────────────────┘  │   │
+         │  │             │                           │   │
+         │  └─────────────┼───────────────────────────┘   │
+         │               │                                 │
+         └───────────────┼─────────────────────────────────┘
+                         │
+                         ▼ (Network call)
+         ┌─────────────────────────────────────────────────┐
+         │    AWS RDS (Relational Database Service)        │
+         │    PostgreSQL Database (ap-south-2)             │
+         │                                                 │
+         │  ┌──────────────────────────────────────────┐   │
+         │  │ Database: postgres                       │   │
+         │  │ User: postgres                           │   │
+         │  │                                          │   │
+         │  │ Tables:                                  │   │
+         │  │ ┌──────────────────────────────────────┐│   │
+         │  │ │ students                             ││   │
+         │  │ │ ├─ id (SERIAL PRIMARY KEY)           ││   │
+         │  │ │ ├─ name (VARCHAR)                    ││   │
+         │  │ │ └─ age (INTEGER)                     ││   │
+         │  │ └──────────────────────────────────────┘│   │
+         │  │                                          │   │
+         │  │ Endpoint:                                │   │
+         │  │ database-1.c7wqac8my5ba.ap-south-2...   │   │
+         │  └──────────────────────────────────────────┘   │
+         │                                                 │
+         └─────────────────────────────────────────────────┘
+```
+
+### Deployment Flow (Simplified)
+
+```
+┌──────────────┐
+│  Developer   │
+│   git push   │
+└──────┬───────┘
+       │ main branch
+       ▼
+┌────────────────────────────────────────┐
+│    GitHub Actions Workflow Starts      │
+│  (.github/workflows/deploy.yml)        │
+└────────────────────────────────────────┘
+       │
+       ├─ Build Docker Image
+       ├─ Push to AWS ECR
+       └─ Deploy to AWS ECS
+       │
+       ▼
+┌────────────────────────────────────────┐
+│   AWS ECS Cluster (ap-south-2)         │
+│                                        │
+│  ┌────────────────────────────────┐   │
+│  │ Flask API (Running)            │   │
+│  │ Listening on Port 5000         │   │
+│  └────────────────────────────────┘   │
+│           │                           │
+│           └──► AWS RDS (PostgreSQL)   │
+│                                       │
+└────────────────────────────────────────┘
+       ▲
+       │
+   API Requests
+(GET/POST /students)
+       │
+   Users
+```
+
 ## Getting Started
 
 ### Prerequisites
@@ -191,29 +373,41 @@ The deployment pipeline is fully automated via GitHub Actions:
 
 ## How the Deployment Works
 
-```
-┌─────────────────────┐
-│   Git Push (main)   │
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────────────────┐
-│   GitHub Actions Workflow       │
-├─────────────────────────────────┤
-│ 1. Build Docker Image           │
-│ 2. Push to ECR Public           │
-│ 3. Update Task Definition       │
-│ 4. Deploy to ECS Cluster        │
-└──────────┬──────────────────────┘
-           │
-           ▼
-┌─────────────────────────────────┐
-│   AWS ECS Cluster               │
-│   (ap-south-2 / Mumbai)         │
-│   - Flask API running           │
-│   - Connected to RDS Database   │
-└─────────────────────────────────┘
-```
+The deployment process follows these 8 stages:
+
+**Stage 1: Code Push**
+- Developer pushes code to the `main` branch on GitHub
+
+**Stage 2: GitHub Actions Build**
+- Code is checked out
+- Docker image is built from the Dockerfile
+- Image is tagged with the commit SHA
+
+**Stage 3: ECR Push**
+- Image is authenticated to AWS ECR Public
+- Docker image is pushed to the container registry
+
+**Stage 4: ECS Update**
+- Current ECS task definition is downloaded
+- New image URI is injected into the task definition
+- Updated task definition is registered with ECS
+
+**Stage 5: Service Deployment**
+- ECS service pulls the new task definition
+- New container instances are started with the latest image
+- Old instances are gracefully terminated
+
+**Stage 6: API Running**
+- Flask application starts and initializes the database
+- Application listens on port 5000
+
+**Stage 7: Database Connection**
+- API connects to AWS RDS PostgreSQL instance
+- `students` table is created if it doesn't exist
+
+**Stage 8: Ready for Requests**
+- API is accessible to users
+- Students can be queried and added via REST endpoints
 
 ## Environment Variables
 
@@ -286,4 +480,4 @@ For issues or questions, please open an issue on the [GitHub repository](https:/
 ---
 
 **Last Updated:** June 2026  
-**Version:** 1.0.0
+**Version:** 1.1.0
